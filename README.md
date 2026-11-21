@@ -11,15 +11,15 @@ The source is published so you can check those claims yourself. It is source-ava
 ## What it does
 
 - **Finds leaked keys.** Scans agent transcripts (Claude Code, Codex, Cursor), agent configs, shell history and `.env` files. Each finding says what the key can do, whether it is a live or sandbox key where the format shows it, and how serious it is. Findings are stored without the key: only the first and last few characters.
-- **Watches continuously.** The menu bar shield turns orange or red within seconds of a key landing in a transcript.
-- **Keeps keys in a safe.** Saving a key needs no unlock. Reading one back needs Touch ID or your master password, every time.
+- **Watches continuously.** The menu bar shield turns orange or red within seconds of a key landing in a transcript. An alert never opens the app by itself.
+- **Keeps keys in a safe.** Opening the panel or the safe window asks for Touch ID, and reading a key back asks again, every time.
 - **Tracks age and expiry,** and takes you straight to the page where each key is managed when it is time to rotate.
 - **Starts projects without `.env` files.** `agentsafe run -- npm run dev` hands the keys to your command after you approve with Touch ID.
 - **Hardens Claude Code** by adding deny rules for secret files.
 
 ## How the safe works
 
-- Each key is encrypted to a public key stored in the safe file, which is why saving needs no unlock.
+- Each key is encrypted to a public key stored in the safe file, so saving a key never requires the secret that opens the others.
 - The matching private key is never stored in the clear. It is wrapped twice: under your master password (PBKDF2, 600,000 rounds) and under a Secure Enclave key that macOS uses only after Touch ID.
 - The app is sandboxed without `com.apple.security.network.client`, so macOS blocks every connection it attempts. Check a build with `codesign -d --entitlements - /Applications/AgentSafe.app`.
 

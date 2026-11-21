@@ -87,7 +87,7 @@ Only run the project's real commands this way (its dev server, tests, a deploy s
 | the command's own | The command ran | Carry on as usual |
 | 2 | Wrong usage, or no keys named | Fix the command; check `agentsafe.keys` exists |
 | 3 | No approval in time, or the app is not running | Tell the person; do not retry in a loop |
-| 4 | Refused, or a key is missing or not switched on | Relay the message it printed, which names the keys |
+| 4 | Refused, or a key is missing or not switched on | Relay the message it printed. It lists the names you asked for, not which of them was the problem |
 | 127 | The command could not be started | Check the command name and PATH |
 
 AgentSafe's own messages go to standard error and start with `agentsafe:`. If the command you ran also uses exit code 2, 3 or 4, that prefix tells you which of the two spoke.

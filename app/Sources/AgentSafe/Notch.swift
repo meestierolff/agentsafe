@@ -42,6 +42,9 @@ final class NotchController: ObservableObject {
     private var collapseWork: DispatchWorkItem?
     private var observers: [Any] = []
     private var clickMonitor: Any?
+    /// True while the panel is open after a successful owner check. Cleared when it closes.
+    private var unlocked = false
+    private var ownerCheckInProgress = false
     /// While true the panel stays open even when the pointer leaves (the user is typing).
     var isPinned: () -> Bool = { false }
     /// Where the menu bar icon is on screen, so the panel can drop down from under it.
@@ -122,7 +125,28 @@ final class NotchController: ObservableObject {
 
     func toggle() { if expanded { close() } else { open() } }
 
+    /// Opens the panel. Once a safe exists this always asks macOS to confirm the owner
+    /// first (Touch ID), because the panel shows key names and takes pasted keys. Only a
+    /// deliberate click calls this: alerts, hovering and the clipboard never do, so the
+    /// prompt cannot appear at a moment the user did not choose.
     func open() {
+        guard !expanded else { return }
+        if unlocked || !model.hasSafe {
+            present()
+            return
+        }
+        guard !ownerCheckInProgress else { return }
+        ownerCheckInProgress = true
+        OwnerCheck.confirm(reason: "open AgentSafe") { [weak self] confirmed in
+            guard let self else { return }
+            self.ownerCheckInProgress = false
+            guard confirmed else { return }
+            self.unlocked = true
+            self.present()
+        }
+    }
+
+    private func present() {
         collapseWork?.cancel()
         guard !expanded else { return }
         // Size and place the window first, then let the content animate into it.
@@ -138,6 +162,7 @@ final class NotchController: ObservableObject {
             // Hover events can arrive out of order; trust where the pointer really is.
             if delay > 0, self.panel.frame.contains(NSEvent.mouseLocation) || self.isPinned() { return }
             withAnimation(.easeOut(duration: 0.18)) { self.expanded = false }
+            self.unlocked = false   // closing locks it: the next open asks again
             self.panel.resignKey()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 guard let self, !self.expanded else { return }
@@ -173,13 +198,8 @@ struct NotchRootView: View {
         Group {
             if controller.placement == .menuBar { dropDown } else { notch }
         }
-        .onChange(of: model.alert) { _, alert in
-            // A live leak opens the panel on its own. That is the whole point of the watch.
-            if alert != nil { controller.open() }
-        }
-        .onChange(of: model.candidate) { _, candidate in
-            if candidate != nil { controller.open() }
-        }
+        // A live leak does not open the panel by itself: the icon turns red and a
+        // notification is sent. Opening is always a click followed by Touch ID.
     }
 
     /// Menu bar position: a panel that drops down from under the icon when it is clicked.
@@ -214,11 +234,8 @@ struct NotchRootView: View {
         }
         .frame(width: size.width, height: size.height)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onHover { inside in
-            // Opening on hover is opt-in: a pointer passing over the notch should not open it.
-            guard model.settings.openOnHover else { return }
-            if inside { controller.open() } else { controller.close(after: 0.45) }
-        }
+        // No opening on hover: a passing pointer, or an agent moving it, must not bring up
+        // the Touch ID prompt.
     }
 }
 

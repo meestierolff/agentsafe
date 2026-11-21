@@ -113,14 +113,15 @@ export default async function Home() {
         <Window id="safe" title="The safe">
           <div className="split">
             <div>
-              <h2>Putting a key in takes a second. Getting one out takes your fingerprint.</h2>
+              <h2>One fingerprint to open it. Another to take a key out.</h2>
               <p>
                 Copy a new key at the provider, paste it into the panel, done. AgentSafe recognises more than 25 key
                 formats and names the key for you.
               </p>
               <p>
-                Saving needs no unlock, because each key is encrypted the moment it arrives. Reading one back needs
-                Touch ID or your master password, every time. An agent can type and click. It cannot touch a sensor.
+                Opening AgentSafe asks for Touch ID, so an agent that can move your pointer never gets to see what
+                is inside. Each key is encrypted the moment you save it, and reading one back asks for Touch ID
+                again, every time. An agent can type and click. It cannot touch a sensor.
               </p>
             </div>
             <div>
@@ -168,7 +169,7 @@ export default async function Home() {
               <h3>What it does</h3>
               <ul>
                 <li>Keeps keys encrypted on disk, never in a plain file</li>
-                <li>Asks for Touch ID before any key is copied or shown</li>
+                <li>Asks for Touch ID to open, and again before any key is copied or shown</li>
                 <li>Finds keys that already leaked, and watches for new ones</li>
                 <li>Stores findings without the secret in them</li>
               </ul>

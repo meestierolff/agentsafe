@@ -640,12 +640,9 @@ final class AppModel: ObservableObject {
         guard let pending = pendingRun else { return }
         var message = "Denied in AgentSafe."
         if !pending.plan.canProceed {
-            var parts: [String] = []
-            if !pending.plan.missing.isEmpty { parts.append("not in your safe: \(pending.plan.missing.joined(separator: ", "))") }
-            if !pending.plan.notAllowed.isEmpty {
-                parts.append("not switched on for commands: \(pending.plan.notAllowed.map(\.envName).joined(separator: ", "))")
-            }
-            message = "AgentSafe could not give these keys (" + parts.joined(separator: "; ") + "). Store each key under its variable name and switch on \"Commands may use this key\"."
+            // Deliberately does not say which names exist in the safe: any program can
+            // send a request, and the answer must not let it map what is stored.
+            message = "AgentSafe could not give these keys (\(pending.request.names.joined(separator: ", "))). Each one must be in the safe under that variable name, with \"Commands may use this key\" switched on."
         }
         reply(RunHandoff.failure(pending.request, message: message), to: pending.request)
         pendingRun = nil
@@ -706,6 +703,8 @@ final class AppModel: ObservableObject {
         // Already in the safe? Then this is just the user copying their own key.
         if let vault, vault.item(matchingFingerprint: vault.fingerprint(of: found.value)) != nil { return }
         candidate = found
+        // The panel stays shut until you open it, so say that something is waiting.
+        Notifier.send(title: "\(found.service) key copied", body: "Open AgentSafe to save it to your safe.")
     }
 
     // MARK: - Hardening

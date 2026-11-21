@@ -12,6 +12,7 @@ license-signing-*.txt
 .build/
 build/
 dist/
+release/
 DerivedData/
 *.xcuserstate
 xcuserdata/

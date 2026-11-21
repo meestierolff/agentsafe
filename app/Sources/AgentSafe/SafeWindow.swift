@@ -997,15 +997,17 @@ struct RunApprovalView: View {
                 Text("in \(Paths.display(pending.request.directory))").font(Aqua.mono(11)).foregroundStyle(Aqua.inkSoft).lineLimit(1).truncationMode(.middle)
             }
 
+            // Shown before any fingerprint, so it lists only what the request itself named.
+            // Which of your keys match stays hidden until you approve.
             VStack(spacing: 0) {
-                ForEach(Array(pending.plan.matched.enumerated()), id: \.element.envName) { index, match in
-                    row(match.envName, detail: match.item.name, profile: model.profile(of: match.item), tint: index)
-                }
-                ForEach(pending.plan.notAllowed, id: \.envName) { match in
-                    problemRow(match.envName, "“\(match.item.name)” is not switched on for commands")
-                }
-                ForEach(pending.plan.missing, id: \.self) { name in
-                    problemRow(name, "no key in your safe for this name")
+                if pending.plan.canProceed {
+                    ForEach(Array(pending.plan.matched.enumerated()), id: \.element.envName) { index, match in
+                        row(match.envName, profile: model.profile(of: match.item), tint: index)
+                    }
+                } else {
+                    ForEach(pending.request.names, id: \.self) { name in
+                        problemRow(name, "not available to commands")
+                    }
                 }
             }
             .overlay(Rectangle().strokeBorder(Color.black.opacity(0.25), lineWidth: 1))
@@ -1014,7 +1016,7 @@ struct RunApprovalView: View {
                 Text("The command will be able to read these keys. AgentSafe cannot check what the command really is, so approve only something you started yourself a moment ago.")
                     .font(Aqua.font(11.5)).foregroundStyle(Aqua.ink).fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Nothing was released. Store each key under its variable name, switch on “Commands may use this key” on the key's page, then run the command again.")
+                Text("Nothing was released. Each key must be in your safe under that variable name, with “Commands may use this key” switched on. Open the safe to check, then run the command again.")
                     .font(Aqua.font(11.5)).foregroundStyle(Aqua.ink).fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1033,10 +1035,9 @@ struct RunApprovalView: View {
         .background(Pinstripes())
     }
 
-    private func row(_ name: String, detail: String, profile: KeyProfile, tint: Int) -> some View {
+    private func row(_ name: String, profile: KeyProfile, tint: Int) -> some View {
         HStack(spacing: 8) {
             Text(name).font(Aqua.mono(11.5, bold: true)).foregroundStyle(Aqua.ink)
-            Text(detail).font(Aqua.font(11)).foregroundStyle(Aqua.inkSoft).lineLimit(1)
             Spacer()
             ProfileChips(profile: profile)
         }
@@ -1096,10 +1097,8 @@ struct SettingsView: View {
                          ? "Click the shield icon in the menu bar to open the panel. Right-click it for the menu."
                          : "Click the strip over the notch to open the panel.")
                         .font(Aqua.font(11)).foregroundStyle(Aqua.inkSoft)
-                    if model.settings.placement == .notch {
-                        Toggle("Also open when the pointer rests on the notch", isOn: Binding(get: { model.settings.openOnHover }, set: { model.setOpenOnHover($0) }))
-                            .font(Aqua.font(12)).foregroundStyle(Aqua.ink)
-                    }
+                    Text("Opening it always asks for Touch ID. A leak alert turns the icon red and sends a notification; it never opens the panel by itself.")
+                        .font(Aqua.font(11)).foregroundStyle(Aqua.inkSoft).fixedSize(horizontal: false, vertical: true)
                 }
 
                 AquaBox(title: "Watching") {
