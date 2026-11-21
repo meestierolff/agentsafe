@@ -289,7 +289,7 @@ struct KeysView: View {
                 } else {
                     AquaBox(title: nil) {
                         Text("Select a key to copy, show or rotate it.").aquaBody()
-                        Text("Key names and dates are visible without unlocking. The values are encrypted, and getting one out always takes \(model.touchIDEnabled ? "Touch ID" : "your master password").")
+                        Text("The values are encrypted, and getting one out always takes \(model.touchIDEnabled ? "Touch ID" : "your master password"), even with this window open.")
                             .aquaBody().fixedSize(horizontal: false, vertical: true)
                     }
                 }

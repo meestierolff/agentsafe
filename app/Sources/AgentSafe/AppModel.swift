@@ -502,7 +502,9 @@ final class AppModel: ObservableObject {
         let detail = place + (secrets == 1 ? stored : "") + " Rotate it."
         if live {
             alert = LeakAlert(title: title, detail: detail)
-            Notifier.send(title: title, body: detail)
+            // The notification is visible without a fingerprint, so it does not say which
+            // of your stored keys this is. The panel does, once opened.
+            Notifier.send(title: title, body: place + " Open AgentSafe to see it and rotate.")
         }
     }
 
