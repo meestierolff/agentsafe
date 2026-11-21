@@ -82,6 +82,12 @@ enum Snapshot {
             render(SafeRootView(model: model), size: CGSize(width: 940, height: 680), to: outputDirectory.appendingPathComponent("safe-\(name).png"))
         }
 
+        // The panel at the moment a pasted key is being saved, with the "where did you create it" field.
+        model.candidate = CaptureCandidate(value: "sk-" + "proj-" + String(repeating: "aZ3k9Q", count: 9), service: "OpenAI", suggestedName: "OpenAI", suggestedEnvName: nil)
+        render(NotchStage(geometry: geometry, expanded: true) { NotchExpandedView(model: model, controller: controller) },
+               size: CGSize(width: 640, height: 460), to: outputDirectory.appendingPathComponent("notch-saving.png"))
+        model.candidate = nil
+
         renderStatusIcons(to: outputDirectory.appendingPathComponent("status-icons.png"))
 
         // The prompt a command sees when it asks for keys.
