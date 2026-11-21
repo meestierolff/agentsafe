@@ -1,0 +1,317 @@
+/*
+  AgentSafe site. The look is early Mac OS X: a blue desktop, a menu bar, brushed-metal
+  windows with pinstripes and gel buttons. One loud element (the notch that drops open),
+  everything else quiet. All artwork is CSS; nothing from Apple is reused.
+*/
+
+:root {
+  --blue: #2d7fe8;
+  --blue-light: #8cc4ff;
+  --blue-deep: #0b4fb3;
+  --ink: #1e2b3a;
+  --ink-soft: #4d5a6a;
+  --paper: #f1f3f6;
+  --stripe: #e4e8ee;
+  --metal-light: #dcdee3;
+  --metal-dark: #a8adb5;
+  --lcd-bg: #0d1c17;
+  --lcd-green: #7dffb3;
+  --lcd-amber: #ffb636;
+  --lcd-red: #ff5545;
+  --danger: #d93025;
+  --ok: #2fa84f;
+  --ui: "Lucida Grande", "Lucida Sans Unicode", "Lucida Sans", Geneva, Verdana, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --column: 1000px;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; scroll-padding-top: 48px; }
+
+body {
+  margin: 0;
+  font-family: var(--ui);
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: #1c3f73;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The desktop: a deep blue sky with two soft bands of light. */
+.desktop {
+  min-height: 100vh;
+  background:
+    radial-gradient(120% 60% at 15% 8%, rgba(120, 220, 235, 0.42), transparent 60%),
+    radial-gradient(90% 55% at 88% 22%, rgba(150, 130, 240, 0.34), transparent 62%),
+    radial-gradient(140% 70% at 50% 110%, rgba(140, 200, 255, 0.55), transparent 60%),
+    linear-gradient(180deg, #14305c 0%, #23579a 38%, #3d86c6 72%, #7fb9e0 100%);
+  background-attachment: fixed;
+  padding-bottom: 72px;
+}
+
+a { color: var(--blue-deep); }
+a:focus-visible, button:focus-visible, summary:focus-visible {
+  outline: 3px solid #ffd54a;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* ── Menu bar ─────────────────────────────────────────── */
+
+.menubar {
+  position: sticky; top: 0; z-index: 30;
+  height: 30px;
+  display: flex; align-items: center; gap: 22px;
+  padding: 0 16px;
+  font-size: 13px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(226, 230, 236, 0.9));
+  border-bottom: 1px solid rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
+}
+.menubar .brand { display: flex; align-items: center; gap: 7px; font-weight: bold; color: var(--ink); text-decoration: none; }
+.menubar .brand img { width: 18px; height: 18px; }
+.menubar nav { display: flex; gap: 20px; }
+.menubar nav a { color: var(--ink); text-decoration: none; }
+.menubar nav a:hover { text-decoration: underline; }
+.menubar .status { margin-left: auto; color: var(--ink-soft); white-space: nowrap; }
+
+/* ── The notch ────────────────────────────────────────── */
+
+.notch-stage {
+  position: relative; z-index: 31;
+  display: flex; justify-content: center;
+  margin-top: -30px;           /* hang from the top edge, over the menu bar */
+  pointer-events: none;
+}
+.notch {
+  pointer-events: auto;
+  width: min(580px, calc(100vw - 20px));
+  background: #000;
+  border-radius: 0 0 22px 22px;
+  padding: 34px 10px 10px;
+  box-shadow: 0 18px 40px rgba(0, 0, 20, 0.45);
+  transform-origin: top center;
+}
+.notch .faceplate {
+  border-radius: 13px;
+  padding: 11px;
+  display: grid; gap: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0 1px, rgba(0, 0, 0, 0.05) 1px 2px),
+    linear-gradient(180deg, var(--metal-light), var(--metal-dark));
+}
+
+.lcd {
+  display: flex; align-items: baseline; gap: 0;
+  min-height: 36px; padding: 6px 13px;
+  border-radius: 6px;
+  font-family: var(--mono); font-weight: 700;
+  color: var(--lcd-green);
+  background:
+    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.3) 0 1px, transparent 1px 3px),
+    var(--lcd-bg);
+  box-shadow: inset 0 1px 0 #000, inset 0 -1px 0 rgba(255, 255, 255, 0.35);
+}
+.lcd .seg { display: inline-flex; align-items: baseline; gap: 5px; text-shadow: 0 0 7px currentColor; }
+.lcd .seg + .seg { margin-left: 12px; padding-left: 12px; border-left: 1px solid rgba(125, 255, 179, 0.2); }
+.lcd .seg b { font-size: 18px; }
+.lcd .seg span { font-size: 10.5px; opacity: 0.8; letter-spacing: 0.02em; }
+.lcd .seg.alarm { color: var(--lcd-red); }
+.lcd .seg.warn { color: var(--lcd-amber); }
+.lcd .tail { margin-left: auto; font-size: 10.5px; opacity: 0.62; }
+
+.notch .alert {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border-radius: 7px;
+  color: #fff; font-size: 12px; line-height: 1.3;
+  background: linear-gradient(180deg, #db4033, #991712);
+  border: 1px solid rgba(0, 0, 0, 0.45);
+}
+.notch .alert strong { display: block; font-size: 13px; }
+.notch .alert .lamp { flex: none; }
+
+.notch .paste {
+  background: #fff; border: 1px solid #8a8f98; border-radius: 4px;
+  padding: 5px 8px; font-size: 12.5px; color: #8b9098;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.notch .keys { background: #fff; border: 1px solid rgba(0, 0, 0, 0.35); border-radius: 6px; overflow: hidden; }
+.notch .key { display: flex; align-items: center; gap: 8px; padding: 5px 9px; font-size: 12px; }
+.notch .key:nth-child(even) { background: #edf1fb; }
+.notch .key .name { font-weight: bold; color: var(--ink); line-height: 1.2; }
+.notch .key .state { font-size: 10px; color: var(--ink-soft); }
+.notch .key .state.bad { color: var(--danger); }
+.notch .key .state.soon { color: #c97f05; }
+.notch .key code { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--ink-soft); }
+.notch .foot { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--ink-soft); }
+.notch .foot .note { margin-left: auto; }
+
+.lamp {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  background: radial-gradient(circle at 35% 28%, #fff, var(--c) 55%);
+  box-shadow: 0 0 5px var(--c);
+}
+.lamp.red { --c: #e2392c; } .lamp.amber { --c: #ee9a12; } .lamp.green { --c: #2fa84f; }
+
+/* The one orchestrated moment: the notch drops open, then the leak alert lands. */
+@media (prefers-reduced-motion: no-preference) {
+  .notch { animation: drop 0.55s cubic-bezier(0.2, 0.9, 0.25, 1.05) 0.35s both; }
+  .notch .alert { animation: land 0.4s ease-out 1.5s both; }
+  .notch .lcd .seg.alarm b { animation: tick 0.01s linear 1.5s both; }
+}
+@keyframes drop { from { transform: scaleY(0.08) scaleX(0.34); opacity: 0.9; } to { transform: none; opacity: 1; } }
+@keyframes land { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes tick { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── Gel buttons ──────────────────────────────────────── */
+
+.gel {
+  position: relative; display: inline-block;
+  padding: 9px 22px;
+  border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 999px;
+  font: bold 15px/1.2 var(--ui);
+  color: #fff; text-decoration: none; text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.35);
+  background: linear-gradient(180deg, var(--blue-light), var(--blue) 48%, var(--blue-deep));
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.gel::before {
+  content: ""; position: absolute; left: 5px; right: 5px; top: 2px; height: 46%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.1));
+  pointer-events: none;
+}
+.gel:hover { filter: brightness(1.06); }
+.gel:active { filter: brightness(0.9); }
+.gel.plain { color: var(--ink); text-shadow: none; background: linear-gradient(180deg, #fff, #e3e5e9 48%, #c5c9cf); }
+.gel.small { padding: 3px 10px; font-size: 11px; }
+.gel[aria-disabled="true"], .gel:disabled { filter: grayscale(0.85); opacity: 0.75; cursor: default; }
+span.gel { cursor: default; }
+
+/* ── Hero ─────────────────────────────────────────────── */
+
+.column { max-width: var(--column); margin: 0 auto; padding: 0 20px; }
+
+.hero { padding: 44px 0 56px; color: #fff; }
+.hero h1 {
+  margin: 0 0 16px; max-width: 880px; text-wrap: balance;
+  font-size: clamp(2.3rem, 5.6vw, 4.1rem); line-height: 1.04; letter-spacing: -0.02em;
+  text-shadow: 0 2px 0 rgba(0, 20, 60, 0.55), 0 8px 26px rgba(0, 15, 50, 0.45);
+}
+.hero p { margin: 0 0 24px; max-width: 58ch; font-size: 1.14rem; text-shadow: 0 1px 2px rgba(0, 20, 60, 0.6); }
+.hero .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.hero .small { margin: 14px 0 0; font-size: 0.86rem; opacity: 0.92; }
+
+/* ── Windows ──────────────────────────────────────────── */
+
+.window {
+  margin: 0 0 44px;
+  border-radius: 9px 9px 6px 6px;
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  background: repeating-linear-gradient(180deg, var(--paper) 0 3px, var(--stripe) 3px 4px);
+  box-shadow: 0 22px 50px rgba(0, 10, 40, 0.45);
+  overflow: hidden;
+}
+.titlebar {
+  position: relative; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: bold; color: var(--ink); text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0 1px, rgba(0, 0, 0, 0.05) 1px 2px),
+    linear-gradient(180deg, #e9ebee, #b6bbc2);
+}
+.titlebar .lights { position: absolute; left: 9px; display: flex; gap: 7px; }
+.titlebar .lights i {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  background: radial-gradient(circle at 35% 28%, #fff, var(--c) 60%);
+}
+.pane { padding: 28px 30px 32px; }
+.pane h2 { margin: 0 0 12px; font-size: 1.75rem; line-height: 1.15; letter-spacing: -0.01em; }
+.pane h3 { margin: 22px 0 6px; font-size: 1.05rem; }
+.pane p, .pane li { max-width: 68ch; }
+.pane p { margin: 0 0 12px; }
+.pane ul { margin: 0 0 12px; padding-left: 1.2em; }
+.pane li { margin-bottom: 5px; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 34px; align-items: start; }
+.split h3:first-child { margin-top: 4px; }
+.split ul:first-child { margin-top: 6px; }
+.shot {
+  display: block; width: 100%; height: auto; margin-top: 18px;
+  border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 6px;
+  box-shadow: 0 8px 22px rgba(0, 10, 40, 0.3);
+}
+
+code, pre { font-family: var(--mono); font-size: 0.86em; }
+pre {
+  margin: 0 0 12px; padding: 10px 12px; overflow-x: auto;
+  color: var(--lcd-green); background: var(--lcd-bg); border-radius: 6px;
+  box-shadow: inset 0 1px 0 #000, inset 0 -1px 0 rgba(255, 255, 255, 0.3);
+}
+p code, li code { padding: 1px 4px; background: #fff; border: 1px solid rgba(0, 0, 0, 0.18); border-radius: 3px; }
+
+.box {
+  padding: 16px 18px; border-radius: 7px;
+  background: rgba(255, 255, 255, 0.66); border: 1px solid rgba(0, 0, 0, 0.18);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.box h3 { margin-top: 0; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* ── Price ────────────────────────────────────────────── */
+
+.price-lcd { padding: 14px 18px; margin-bottom: 16px; flex-wrap: wrap; row-gap: 8px; }
+.price-lcd .seg b { font-size: 44px; line-height: 1; }
+.price-lcd .seg span { font-size: 13px; }
+.price-lcd .tail { font-size: 13px; }
+.ladder { display: flex; gap: 6px; margin: 0 0 18px; padding: 0; list-style: none; flex-wrap: wrap; }
+.ladder li {
+  margin: 0; padding: 4px 10px; border-radius: 999px; font-family: var(--mono); font-size: 13px;
+  background: #fff; border: 1px solid rgba(0, 0, 0, 0.25); color: var(--ink-soft);
+}
+.ladder li.past { text-decoration: line-through; opacity: 0.6; }
+.ladder li.now { color: #fff; font-weight: bold; background: var(--blue); border-color: var(--blue-deep); }
+
+details { border-top: 1px solid rgba(0, 0, 0, 0.15); padding: 10px 0; }
+details:last-of-type { border-bottom: 1px solid rgba(0, 0, 0, 0.15); }
+summary { cursor: pointer; font-weight: bold; }
+details p { margin: 8px 0 2px; }
+
+.licence {
+  width: 100%; min-height: 110px; resize: vertical; padding: 10px 12px;
+  font-family: var(--mono); font-size: 13px; line-height: 1.45; word-break: break-all;
+  color: var(--lcd-green); background: var(--lcd-bg); border: 0; border-radius: 6px;
+  box-shadow: inset 0 1px 0 #000, inset 0 -1px 0 rgba(255, 255, 255, 0.3);
+}
+
+footer.site { color: rgba(255, 255, 255, 0.92); font-size: 0.86rem; text-shadow: 0 1px 2px rgba(0, 20, 60, 0.6); }
+footer.site a { color: #fff; }
+
+/* ── Small screens ────────────────────────────────────── */
+
+/* The notch hangs over the middle of the menu bar, so the links step aside early. */
+@media (max-width: 1180px) { .menubar nav { display: none; } }
+@media (max-width: 980px) { .menubar .status { display: none; } }
+
+@media (max-width: 760px) {
+  .split, .pair { grid-template-columns: 1fr; }
+  .pane { padding: 20px 16px 24px; }
+  .hero { padding-top: 30px; }
+  .notch .key code { display: none; }
+  .notch .key .gel { margin-left: auto; }
+  .lcd .seg + .seg { margin-left: 8px; padding-left: 8px; }
+  .lcd .tail { display: none; }
+  .price-lcd .seg b { font-size: 34px; }
+}

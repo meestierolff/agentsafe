@@ -1,0 +1,32 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.key
+license-signing-*.txt
+
+# macOS / Xcode / SwiftPM
+.DS_Store
+.build/
+build/
+dist/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.dmg
+
+# Node
+node_modules/
+.next/
+.vercel/
+out/
+*.tsbuildinfo
+
+# Local tooling output
+.playwright-mcp/
+my-license.txt
+
+# Local Claude Code settings
+.claude/

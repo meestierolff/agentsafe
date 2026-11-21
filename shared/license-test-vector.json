@@ -1,0 +1,12 @@
+{
+  "note": "TEST VECTOR. The seed is bytes 1..32. Both the website (signer) and the Mac app (verifier) must agree on this.",
+  "seedHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "publicKeyBase64": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+  "payload": {
+    "id": "lic_test_0001",
+    "email": "buyer@example.com",
+    "iat": 1795000000,
+    "sku": "agentsafe-mac"
+  },
+  "license": "AS1.eyJpZCI6ImxpY190ZXN0XzAwMDEiLCJlbWFpbCI6ImJ1eWVyQGV4YW1wbGUuY29tIiwiaWF0IjoxNzk1MDAwMDAwLCJza3UiOiJhZ2VudHNhZmUtbWFjIn0.1Jow6qFVvJMtmMAnr3aZNpp-j2zGhSRgZm1xX0_hhcADifvwqCYZssFEki69jo_J5ODtuupRNCCM-9OXYLweAQ"
+}
