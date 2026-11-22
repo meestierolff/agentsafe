@@ -6,7 +6,7 @@ export function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
-      className="gel"
+      className="btn btn-md btn-aqua"
       type="button"
       onClick={async () => {
         await navigator.clipboard.writeText(text);
