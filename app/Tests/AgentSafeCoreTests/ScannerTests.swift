@@ -136,9 +136,29 @@ final class ScannerTests: XCTestCase {
         }
     }
 
+    func testScanningDataFindsWhatScanningTheFileFinds() throws {
+        let text = "STRIPE_SECRET_KEY=\(Fake.stripeLive)\n# comment\nSESSION_SECRET=\(Fake.noise(40, seed: 40))\n"
+        let file = write("p/.env", text)
+        let source = ScanSource(id: "env-file", label: "Env file", kind: .envFile, root: file, matcher: .file)
+        let fromFile = try scanner.scan(file: file, source: source).findings
+        let fromData = scanner.scan(data: Data(text.utf8), path: "git:/r/.git:.env", kind: .gitHistory, sourceLabel: "Git history", envRules: true)
+        struct Key: Hashable { let rule: String; let print: String; let line: Int; let name: String? }
+        func keys(_ f: [Finding]) -> Set<Key> { Set(f.map { Key(rule: $0.ruleID, print: $0.fingerprint, line: $0.line, name: $0.name) }) }
+        XCTAssertEqual(fromFile.count, 2)
+        XCTAssertEqual(keys(fromData), keys(fromFile))
+        XCTAssertTrue(fromData.allSatisfy { $0.path == "git:/r/.git:.env" && $0.kind == .gitHistory && $0.sourceLabel == "Git history" })
+        XCTAssertEqual(fromData.first?.id, SecretScanner.findingID(fingerprint: fromData[0].fingerprint, path: "git:/r/.git:.env"))
+    }
+
+    func testHistoryVersionWithoutEnvRulesIgnoresAssignments() {
+        let text = "STRIPE_SECRET_KEY=\(Fake.stripeLive)\nSESSION_SECRET=\(Fake.noise(40, seed: 40))\n"
+        let found = scanner.scan(data: Data(text.utf8), path: "git:/r/.git:.zsh_history", kind: .gitHistory, sourceLabel: "Git history", envRules: false)
+        XCTAssertEqual(found.map(\.ruleID), ["stripe"])
+    }
+
     func testOnlyCopiesThatShouldNotExistCountAsLeaks() {
-        // A key in a transcript, a shell history or an agent config is a leak.
+        // A key in a transcript, a shell history, an agent config or a commit is a leak.
         // A key in a .env file is where developers keep keys: exposed, but not leaked.
-        XCTAssertEqual(SourceKind.allCases.filter(\.isLeak), [.agentTranscript, .agentConfig, .shellHistory])
+        XCTAssertEqual(SourceKind.allCases.filter(\.isLeak), [.agentTranscript, .agentConfig, .shellHistory, .gitHistory])
     }
 }

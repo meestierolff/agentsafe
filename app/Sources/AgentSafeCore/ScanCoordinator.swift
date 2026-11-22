@@ -16,10 +16,18 @@ struct FileState: Codable, Equatable {
     var anchor: String
 }
 
+/// What we remember about a git repository between scans.
+struct RepositoryState: Codable, Equatable {
+    /// `GitHistoryScanner.tipsHash` when its history was last read in full.
+    var tipsHash: String
+}
+
 /// The scanner's memory between runs, stamped with the rules it was produced by.
 struct ScanState: Codable {
     var ruleset: Int
     var files: [String: FileState]
+    /// Keyed by the repository's common git folder. Absent in files written by 0.3.0.
+    var repositories: [String: RepositoryState]?
 }
 
 /// What happened when the user asked to remove leaked copies from disk.
@@ -52,6 +60,14 @@ public struct ScanReport: Sendable {
     public var cancelled = false
     /// Findings that were not known before this scan.
     public var newFindings: [Finding] = []
+    /// Git repositories whose history was read this time.
+    public var repositoriesScanned = 0
+    /// Unchanged since the last scan, so not read again.
+    public var repositoriesSkipped = 0
+    /// Repositories that could not be read at all, by folder. Their earlier findings are kept.
+    public var repositoriesUnreadable: [String] = []
+    /// Repositories with objects missing, by folder. What could be read was scanned.
+    public var repositoriesPartlyRead: [String] = []
 }
 
 /// Decides how much of each file needs reading.
@@ -68,6 +84,7 @@ public final class ScanCoordinator {
     public let store: FindingStore
     private let stateURL: URL
     private var states: [String: FileState] = [:]
+    private var repositoryStates: [String: RepositoryState] = [:]
 
     private enum Outcome {
         case skipped([Finding])
@@ -87,12 +104,15 @@ public final class ScanCoordinator {
         if let data = try? Data(contentsOf: stateURL), let saved = try? Crypto.decoder.decode(ScanState.self, from: data),
            saved.ruleset == SecretRule.rulesetVersion {
             states = saved.files
+            repositoryStates = saved.repositories ?? [:]
         }
     }
 
-    /// Forget what was read before, so the next scan reads every file from the start.
+    /// Forget what was read before, so the next scan reads every file and every
+    /// repository's history from the start.
     public func resetState() {
         states = [:]
+        repositoryStates = [:]
         saveState()
     }
 
@@ -115,9 +135,13 @@ public final class ScanCoordinator {
         var newStates: [String: FileState] = [:]
         var visited = Set<String>()
         var done = 0
+        var repositories: [GitRepositoryLocation] = []
 
         for source in sources {
-            for (rawFile, effective) in scanner.files(for: source) {
+            let walked = scanner.filesAndRepositories(for: source)
+            repositories += walked.repositories
+            if case .projects = source.matcher { repositories += GitRepositoryLocator.dotfilesCandidates(home: source.root) }
+            for (rawFile, effective) in walked.files {
                 if isCancelled() {
                     report.cancelled = true
                     return report
@@ -145,7 +169,54 @@ public final class ScanCoordinator {
                 if done % 20 == 0 { progress?(source.label, done) }
             }
         }
+
+        // History, after the files. Same rules: skip what did not change, keep findings for
+        // what could not be read, and commit nothing if the scan is cancelled.
+        var newRepositoryStates: [String: RepositoryState] = [:]
+        if let home = sources.first(where: { if case .projects = $0.matcher { return true } else { return false } })?.root {
+            progress?("Git history", 0)
+            let history = GitHistoryScanner(scanner: scanner)
+            var seen = Set<String>()
+            for location in repositories where seen.insert(location.commonDirectory.path).inserted {
+                if isCancelled() {
+                    report.cancelled = true
+                    return report
+                }
+                let key = location.commonDirectory.path
+                let previous = store.findings.filter { $0.kind == .gitHistory && $0.path.hasPrefix("git:\(key):") }
+                let hash = GitHistoryScanner.tipsHash(location)
+                if let hash, let known = repositoryStates[key], known.tipsHash == hash {
+                    all.append(contentsOf: previous)
+                    newRepositoryStates[key] = known
+                    report.repositoriesSkipped += 1
+                } else {
+                    let emails = GitHistoryScanner.userEmails(home: home, location: location)
+                    guard let result = history.scan(location, userEmails: emails, now: now, isCancelled: isCancelled) else {
+                        report.cancelled = true
+                        return report
+                    }
+                    switch result.outcome {
+                    case .complete:
+                        all.append(contentsOf: result.findings)
+                        if let tips = result.tipsHash { newRepositoryStates[key] = RepositoryState(tipsHash: tips) }
+                        report.repositoriesScanned += 1
+                    case .partlyRead:
+                        let fresh = Set(result.findings.map(\.id))
+                        all.append(contentsOf: result.findings + previous.filter { !fresh.contains($0.id) })
+                        newRepositoryStates[key] = repositoryStates[key]
+                        report.repositoriesPartlyRead.append(location.displayPath)
+                    case .unreadable:
+                        all.append(contentsOf: previous)
+                        newRepositoryStates[key] = repositoryStates[key]
+                        report.repositoriesUnreadable.append(location.displayPath)
+                    }
+                }
+                progress?("Git history", seen.count)
+            }
+        }
+
         states = newStates
+        repositoryStates = newRepositoryStates
         saveState()
         store.replaceAll(with: all)
         report.newFindings = store.findings.filter { !knownBefore.contains($0.id) }
@@ -284,7 +355,7 @@ public final class ScanCoordinator {
     }
 
     private func saveState() {
-        let state = ScanState(ruleset: SecretRule.rulesetVersion, files: states)
+        let state = ScanState(ruleset: SecretRule.rulesetVersion, files: states, repositories: repositoryStates)
         if let data = try? Crypto.encoder.encode(state) { try? SecureFile.write(data, to: stateURL) }
     }
 }

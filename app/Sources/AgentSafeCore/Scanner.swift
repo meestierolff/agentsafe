@@ -10,24 +10,46 @@ public enum SourceKind: String, Codable, Sendable, CaseIterable {
     case envFile
     /// Files that hold credentials by design (`~/.aws/credentials`, `~/.npmrc`).
     case credentialsFile
+    /// An earlier version of a key-holding file, kept in a git repository's history.
+    case gitHistory
 
     /// A pure record of what happened (a transcript, a command history). Nothing reads a
     /// key back out of these, so removing it is safe. A config or .env file is different:
-    /// something uses the key there, and replacing it would break that.
+    /// something uses the key there, and replacing it would break that. Git history is
+    /// never rewritten by AgentSafe: that needs a force-push and breaks other clones.
     public var isRecord: Bool {
         switch self {
         case .agentTranscript, .shellHistory: return true
-        case .agentConfig, .envFile, .credentialsFile: return false
+        case .agentConfig, .envFile, .credentialsFile, .gitHistory: return false
         }
     }
 
-    /// A copy that should not exist at all (an agent or a shell wrote it down), as
-    /// opposed to a file whose job is to hold keys.
+    /// A copy that should not exist at all (an agent or a shell wrote it down, or it was
+    /// committed), as opposed to a file whose job is to hold keys.
     public var isLeak: Bool {
         switch self {
-        case .agentTranscript, .agentConfig, .shellHistory: return true
+        case .agentTranscript, .agentConfig, .shellHistory, .gitHistory: return true
         case .envFile, .credentialsFile: return false
         }
+    }
+}
+
+/// Where in a git repository's history a key was found.
+public struct GitLocation: Codable, Equatable, Sendable {
+    /// The repository's working folder, or its git folder when it is bare.
+    public let repository: String
+    public let pathInRepository: String
+    /// The remote a commit holding the key was pushed to, as host and path
+    /// (`github.com/owner/repo`). `nil` when it is only in local commits.
+    public let pushedTo: String?
+    /// The file is still committed in the current branch, not only in history.
+    public let inHead: Bool
+    /// A commit by the user (their git email as author or committer) introduced it.
+    public let committedByUser: Bool
+
+    public init(repository: String, pathInRepository: String, pushedTo: String?, inHead: Bool, committedByUser: Bool) {
+        self.repository = repository; self.pathInRepository = pathInRepository; self.pushedTo = pushedTo
+        self.inHead = inHead; self.committedByUser = committedByUser
     }
 }
 
@@ -117,6 +139,51 @@ public enum SourceCatalog {
         guard name == ".env" || name.hasPrefix(".env.") else { return false }
         return !envFileSuffixesToSkip.contains { name.hasSuffix($0) }
     }
+
+    /// Folders the history scan never descends into. Not `skippedDirectories`: that list
+    /// holds `Library`, which would hide `Library/Application Support/Claude/...` in a
+    /// dotfiles repository.
+    public static let gitTreeSkippedDirectories: Set<String> = [
+        "node_modules", "vendor", "Pods", "bower_components", "site-packages", "__pycache__", "DerivedData",
+    ]
+
+    /// Whether a path in a git repository is a file that holds keys, and which kind.
+    /// Only these are read from history; source files are not.
+    public static func gitKeyFileGroup(forPath path: String) -> GitKeyFileGroup? {
+        let parts = path.split(separator: "/").map(String.init)
+        guard let name = parts.last else { return nil }
+        let parent = parts.count >= 2 ? parts[parts.count - 2] : ""
+        if isSecretEnvFileName(name) || name == ".dev.vars" { return .envFile }
+        // Transcripts and prompt history, as written under ~/.claude and ~/.codex: these turn
+        // up in dotfiles repositories that track those folders.
+        func follows(_ first: String, _ second: String) -> Bool {
+            zip(parts, parts.dropFirst()).contains { $0 == first && $1 == second }
+        }
+        if name.hasSuffix(".jsonl"), follows(".claude", "projects") || follows(".codex", "sessions") { return .agentLog }
+        if name == "history.jsonl", parent == ".claude" || parent == ".codex" { return .agentLog }
+        switch name {
+        case ".mcp.json", ".claude.json", "claude_desktop_config.json": return .agentConfig
+        case "mcp.json" where parent == ".cursor": return .agentConfig
+        case "mcp_config.json" where parent == "windsurf": return .agentConfig
+        case "settings.json" where parent == ".claude", "settings.local.json" where parent == ".claude": return .agentConfig
+        case "config.toml" where parent == ".codex": return .agentConfig
+        case ".aider.chat.history.md": return .agentLog
+        case ".zsh_history", ".bash_history", "fish_history": return .shellHistory
+        case ".npmrc", ".pypirc", ".netrc", ".git-credentials", "id_rsa", "id_ecdsa", "id_ed25519": return .credentials
+        case "credentials" where parent == ".aws": return .credentials
+        default: break
+        }
+        if let specstory = parts.firstIndex(of: ".specstory"), specstory + 2 < parts.count, parts[specstory + 1] == "history" { return .agentLog }
+        return nil
+    }
+}
+
+/// The kinds of key-holding files read from git history.
+public enum GitKeyFileGroup: Sendable {
+    case envFile, agentConfig, agentLog, shellHistory, credentials
+
+    /// .env files also get the `NAME=value` heuristic; the others only known key shapes.
+    public var envRules: Bool { self == .envFile }
 }
 
 public enum FindingStatus: String, Codable, Sendable {
@@ -148,17 +215,29 @@ public struct Finding: Codable, Identifiable, Equatable, Sendable {
     /// Set when the copy in this file was removed. The finding is kept until the user
     /// rotates the key, because removing a copy does not un-leak it.
     public var localCopyRemovedAt: Date?
+    /// Set for `.gitHistory` findings. Their `path` is synthetic (see `gitPath`).
+    public var git: GitLocation?
 
     public init(id: String, ruleID: String, service: String, name: String?, preview: String, fingerprint: String, path: String,
-                line: Int, count: Int, kind: SourceKind, sourceLabel: String, firstSeen: Date, lastSeen: Date, status: FindingStatus) {
+                line: Int, count: Int, kind: SourceKind, sourceLabel: String, firstSeen: Date, lastSeen: Date, status: FindingStatus,
+                git: GitLocation? = nil) {
         self.id = id; self.ruleID = ruleID; self.service = service; self.name = name; self.preview = preview
         self.fingerprint = fingerprint; self.path = path; self.line = line; self.count = count; self.kind = kind
         self.sourceLabel = sourceLabel; self.firstSeen = firstSeen; self.lastSeen = lastSeen; self.status = status
+        self.git = git
     }
 
-    /// Databases cannot be edited safely as text; the only fix for those is to rotate the key.
+    /// The `path` of a history finding. Never a real file, so nothing that acts on files
+    /// (the live watch, the scrubber) can touch it, and its ID cannot collide with the
+    /// finding for the working-tree file of the same name.
+    public static func gitPath(commonDirectory: String, pathInRepository: String) -> String {
+        "git:\(commonDirectory):\(pathInRepository)"
+    }
+
+    /// Databases cannot be edited safely as text, and history is never rewritten here;
+    /// the only fix for those is to rotate the key.
     public var canScrub: Bool {
-        !["vscdb", "db", "sqlite", "sqlite3"].contains((path as NSString).pathExtension.lowercased())
+        kind != .gitHistory && !["vscdb", "db", "sqlite", "sqlite3"].contains((path as NSString).pathExtension.lowercased())
     }
 }
 
@@ -237,8 +316,36 @@ public final class SecretScanner: @unchecked Sendable {
 
     public func scan(file rawFile: URL, source: ScanSource, fromOffset: UInt64 = 0, startLine: Int = 0, now: Date = Date()) throws -> FileScanResult {
         let file = rawFile.canonical
-        var hits: [String: Finding] = [:]
-        var order: [String] = []
+        let collector = Collector(path: file.path, kind: source.kind, sourceLabel: source.label, now: now, fingerprint: fingerprint)
+        let reader = try LineBlockReader(url: file, offset: fromOffset, chunkSize: chunkSize, maxBytes: maxFileBytes)
+        var line = startLine
+        try reader.forEachBlock { part in
+            line += scanBlock(part, firstLine: line, envRules: source.kind == .envFile, into: collector)
+        }
+        return FileScanResult(findings: collector.findings, endOffset: reader.endOffset, endLine: line)
+    }
+
+    /// Scans contents held in memory, such as one version of a file from git history.
+    /// `path` is used exactly as given, for the findings' path and IDs. `envRules` adds the
+    /// `NAME=value` heuristic used for .env files.
+    public func scan(data: Data, path: String, kind: SourceKind, sourceLabel: String, envRules: Bool, now: Date = Date()) -> [Finding] {
+        let collector = Collector(path: path, kind: kind, sourceLabel: sourceLabel, now: now, fingerprint: fingerprint)
+        _ = scanBlock(LineBlockReader.Block(data: data, overlapPrefix: 0, truncated: false), firstLine: 0, envRules: envRules, into: collector)
+        return collector.findings
+    }
+
+    /// One finding per secret in one file, counting repeats.
+    private final class Collector {
+        let path: String, kind: SourceKind, sourceLabel: String, now: Date
+        let fingerprint: (String) -> String
+        private var hits: [String: Finding] = [:]
+        private var order: [String] = []
+
+        init(path: String, kind: SourceKind, sourceLabel: String, now: Date, fingerprint: @escaping (String) -> String) {
+            self.path = path; self.kind = kind; self.sourceLabel = sourceLabel; self.now = now; self.fingerprint = fingerprint
+        }
+
+        var findings: [Finding] { order.compactMap { hits[$0] } }
 
         func record(ruleID: String, service: String, name: String?, value: String, line: Int) {
             let print = fingerprint(value)
@@ -250,48 +357,44 @@ public final class SecretScanner: @unchecked Sendable {
             }
             order.append(print)
             hits[print] = Finding(
-                id: Self.findingID(fingerprint: print, path: file.path),
+                id: SecretScanner.findingID(fingerprint: print, path: path),
                 ruleID: ruleID, service: service, name: name, preview: Redactor.preview(value), fingerprint: print,
-                path: file.path, line: line, count: 1, kind: source.kind, sourceLabel: source.label,
+                path: path, line: line, count: 1, kind: kind, sourceLabel: sourceLabel,
                 firstSeen: now, lastSeen: now, status: .open)
         }
+    }
 
-        let isEnvFile = source.kind == .envFile
-        let reader = try LineBlockReader(url: file, offset: fromOffset, chunkSize: chunkSize, maxBytes: maxFileBytes)
-        var line = startLine
-        try reader.forEachBlock { part in
-            let block = part.data
-            if isEnvFile {
-                // .env files are small, and need the NAME=value heuristic as well as the shape rules.
-                let text = String(decoding: block, as: UTF8.self)
-                let matches = detector.matches(in: text)
-                let assignments = detector.envAssignments(in: text)
-                let lines = LineIndex(text)
-                for match in matches {
-                    let name = assignments.first { $0.value.contains(match.value) || match.value.contains($0.value) }?.name
-                    record(ruleID: match.rule.id, service: match.rule.service, name: name, value: match.value,
-                           line: line + lines.lineNumber(atUTF16Offset: match.offset))
-                }
-                for assignment in assignments where !matches.contains(where: { $0.value.contains(assignment.value) || assignment.value.contains($0.value) }) {
-                    let offset = (text as NSString).range(of: assignment.value).location
-                    record(ruleID: "env-assignment", service: "API key", name: assignment.name, value: assignment.value,
-                           line: line + lines.lineNumber(atUTF16Offset: offset == NSNotFound ? 0 : offset))
-                }
-                line += lines.count
-                return
+    /// Records the secrets in one block and returns how many lines it held.
+    private func scanBlock(_ part: LineBlockReader.Block, firstLine line: Int, envRules: Bool, into collector: Collector) -> Int {
+        let block = part.data
+        if envRules {
+            // .env files are small, and need the NAME=value heuristic as well as the shape rules.
+            let text = String(decoding: block, as: UTF8.self)
+            let matches = detector.matches(in: text)
+            let assignments = detector.envAssignments(in: text)
+            let lines = LineIndex(text)
+            for match in matches {
+                let name = assignments.first { $0.value.contains(match.value) || match.value.contains($0.value) }?.name
+                collector.record(ruleID: match.rule.id, service: match.rule.service, name: name, value: match.value,
+                                 line: line + lines.lineNumber(atUTF16Offset: match.offset))
             }
-            let result = detector.scan(block)
-            for match in result.matches {
-                let end = match.byteOffset + match.value.utf8.count
-                // Already counted at the end of the previous block.
-                if part.overlapPrefix > 0, end <= part.overlapPrefix { continue }
-                // Touches the cut: probably half a key. The next block has it whole.
-                if part.truncated, end >= block.count { continue }
-                record(ruleID: match.rule.id, service: match.rule.service, name: nil, value: match.value, line: line + match.line)
+            for assignment in assignments where !matches.contains(where: { $0.value.contains(assignment.value) || assignment.value.contains($0.value) }) {
+                let offset = (text as NSString).range(of: assignment.value).location
+                collector.record(ruleID: "env-assignment", service: "API key", name: assignment.name, value: assignment.value,
+                                 line: line + lines.lineNumber(atUTF16Offset: offset == NSNotFound ? 0 : offset))
             }
-            line += result.newlines
+            return lines.count
         }
-        return FileScanResult(findings: order.compactMap { hits[$0] }, endOffset: reader.endOffset, endLine: line)
+        let result = detector.scan(block)
+        for match in result.matches {
+            let end = match.byteOffset + match.value.utf8.count
+            // Already counted at the end of the previous block.
+            if part.overlapPrefix > 0, end <= part.overlapPrefix { continue }
+            // Touches the cut: probably half a key. The next block has it whole.
+            if part.truncated, end >= block.count { continue }
+            collector.record(ruleID: match.rule.id, service: match.rule.service, name: nil, value: match.value, line: line + match.line)
+        }
+        return result.newlines
     }
 
     /// Values in `block` whose fingerprint is one of `targets`, with the fingerprint each
@@ -313,7 +416,21 @@ public final class SecretScanner: @unchecked Sendable {
 
     // MARK: - File discovery
 
-    func files(for source: ScanSource) -> [(URL, ScanSource)] {
+    func files(for source: ScanSource) -> [(URL, ScanSource)] { filesAndRepositories(for: source).files }
+
+    /// The files of a source and, for the project walk, every git repository it passes,
+    /// found in the same walk so the home folder is only walked once.
+    func filesAndRepositories(for source: ScanSource) -> (files: [(URL, ScanSource)], repositories: [GitRepositoryLocation]) {
+        if case .projects(let maxDepth) = source.matcher {
+            var out: [(URL, ScanSource)] = []
+            var repositories: [GitRepositoryLocation] = []
+            walkProjects(source.root, depth: 0, maxDepth: maxDepth, base: source, into: &out, repositories: &repositories)
+            return (out, repositories)
+        }
+        return (matchedFiles(for: source), [])
+    }
+
+    private func matchedFiles(for source: ScanSource) -> [(URL, ScanSource)] {
         let fm = FileManager.default
         switch source.matcher {
         case .file:
@@ -328,14 +445,13 @@ public final class SecretScanner: @unchecked Sendable {
                 }
             }
             return out
-        case .projects(let maxDepth):
-            var out: [(URL, ScanSource)] = []
-            walkProjects(source.root, depth: 0, maxDepth: maxDepth, base: source, into: &out)
-            return out
+        case .projects:
+            return filesAndRepositories(for: source).files
         }
     }
 
-    private func walkProjects(_ dir: URL, depth: Int, maxDepth: Int, base: ScanSource, into out: inout [(URL, ScanSource)]) {
+    private func walkProjects(_ dir: URL, depth: Int, maxDepth: Int, base: ScanSource, into out: inout [(URL, ScanSource)],
+                              repositories: inout [GitRepositoryLocation]) {
         let fm = FileManager.default
         // Per-project agent files live in hidden folders we otherwise do not descend into.
         for relative in [".claude/settings.local.json", ".claude/settings.json", ".cursor/mcp.json", ".mcp.json", ".aider.chat.history.md"] {
@@ -345,10 +461,14 @@ public final class SecretScanner: @unchecked Sendable {
         guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: []) else { return }
         for entry in entries {
             let name = entry.lastPathComponent
+            if name == ".git" {
+                if let repository = GitRepositoryLocator.resolve(dotGit: entry) { repositories.append(repository) }
+                continue
+            }
             let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
             if isDirectory {
                 if depth < maxDepth, !name.hasPrefix("."), !SourceCatalog.skippedDirectories.contains(name) {
-                    walkProjects(entry, depth: depth + 1, maxDepth: maxDepth, base: base, into: &out)
+                    walkProjects(entry, depth: depth + 1, maxDepth: maxDepth, base: base, into: &out, repositories: &repositories)
                 }
             } else if SourceCatalog.isSecretEnvFileName(name), let source = Self.projectSource(for: entry, base: base) {
                 out.append((entry, source))
@@ -470,20 +590,39 @@ struct LineIndex {
 // MARK: - Remembering findings
 
 extension Finding {
-    /// The copy is gone from disk but the key has not been replaced yet.
-    var awaitsRotation: Bool { localCopyRemovedAt != nil && status == .open }
+    /// The copy is gone from disk but the key has not been replaced yet. A pushed history
+    /// copy counts too: deleting the clone or rewriting history does not un-push it.
+    var awaitsRotation: Bool {
+        guard status == .open else { return false }
+        return localCopyRemovedAt != nil || (kind == .gitHistory && git?.pushedTo != nil)
+    }
+}
+
+/// Decodes one entry of a list without failing the whole list. A finding written by a
+/// newer version (an unknown kind) is skipped instead of emptying the store.
+private struct Lossy<Value: Decodable>: Decodable {
+    let value: Value?
+    init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
 }
 
 /// Findings on disk, redacted. Keeps what the user decided ("I rotated this") across rescans.
+///
+/// History findings are kept in their own file (`git-findings.json`), so an older version
+/// that does not know the `.gitHistory` kind never sees one, and going back to it loses
+/// none of the decisions it knew about.
 public final class FindingStore {
     public let url: URL
+    public var historyURL: URL { url.deletingLastPathComponent().appendingPathComponent("git-findings.json") }
     public private(set) var findings: [Finding] = []
 
     public init(url: URL) {
         self.url = url
-        if let data = try? Data(contentsOf: url), let saved = try? Crypto.decoder.decode([Finding].self, from: data) {
-            findings = saved
-        }
+        findings = Self.load(url) + Self.load(historyURL)
+    }
+
+    private static func load(_ url: URL) -> [Finding] {
+        guard let data = try? Data(contentsOf: url), let saved = try? Crypto.decoder.decode([Lossy<Finding>].self, from: data) else { return [] }
+        return saved.compactMap(\.value)
     }
 
     public var openCount: Int { findings.filter { $0.status == .open }.count }
@@ -491,9 +630,25 @@ public final class FindingStore {
     /// After a full scan: anything no longer found is gone; anything still there keeps its history.
     public func replaceAll(with fresh: [Finding]) {
         let previous = Dictionary(findings.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let decided = decidedStatusByFingerprint()
         let freshIDs = Set(fresh.map(\.id))
-        findings = fresh.map { carry(previous[$0.id], into: $0) } + findings.filter { $0.awaitsRotation && !freshIDs.contains($0.id) }
+        findings = fresh.map { carry(previous[$0.id], into: $0, decided: decided) } + findings.filter { $0.awaitsRotation && !freshIDs.contains($0.id) }
         save()
+    }
+
+    /// For each key, the status every known copy shares, when that is a decision (rotated
+    /// or ignored). A decision belongs to the key: the UI marks every copy at once, and a
+    /// rotated key is dead wherever its old value turns up.
+    private func decidedStatusByFingerprint() -> [String: FindingStatus] {
+        var out: [String: FindingStatus?] = [:]
+        for finding in findings {
+            if let seen = out[finding.fingerprint] {
+                if seen != finding.status { out[finding.fingerprint] = .some(nil) }
+            } else {
+                out[finding.fingerprint] = finding.status
+            }
+        }
+        return out.compactMapValues { status in status.flatMap { $0 == .open ? nil : $0 } }
     }
 
     /// Records that the copy in a file was removed, and keeps the finding until it is rotated.
@@ -507,9 +662,10 @@ public final class FindingStore {
     public func replace(path: String, with fresh: [Finding]) {
         let old = findings.filter { $0.path == path }
         let previous = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let decided = decidedStatusByFingerprint()
         let freshIDs = Set(fresh.map(\.id))
         findings.removeAll { $0.path == path }
-        findings.append(contentsOf: fresh.map { carry(previous[$0.id], into: $0) })
+        findings.append(contentsOf: fresh.map { carry(previous[$0.id], into: $0, decided: decided) })
         findings.append(contentsOf: old.filter { $0.awaitsRotation && !freshIDs.contains($0.id) })
         save()
     }
@@ -531,18 +687,31 @@ public final class FindingStore {
         save()
     }
 
-    private func carry(_ old: Finding?, into new: Finding) -> Finding {
-        guard let old else { return new }
+    private func carry(_ old: Finding?, into new: Finding, decided: [String: FindingStatus]) -> Finding {
+        guard let old else {
+            var arrived = new
+            if let status = decided[new.fingerprint] { arrived.status = status }
+            return arrived
+        }
         var merged = new
         merged.status = old.status
         merged.firstSeen = old.firstSeen
+        // Once seen as pushed, always pushed: removing the remote or pruning a merged branch
+        // deletes the evidence on this Mac, not the copy on the server.
+        if let pushed = old.git?.pushedTo, let git = merged.git, git.pushedTo == nil {
+            merged.git = GitLocation(repository: git.repository, pathInRepository: git.pathInRepository, pushedTo: pushed,
+                                     inHead: git.inHead, committedByUser: git.committedByUser)
+        }
         // Found in the file again, so any earlier removal no longer describes it.
         merged.localCopyRemovedAt = nil
         return merged
     }
 
     private func save() {
-        if let data = try? Crypto.encoder.encode(findings) { try? SecureFile.write(data, to: url) }
+        let history = findings.filter { $0.kind == .gitHistory }
+        let rest = findings.filter { $0.kind != .gitHistory }
+        if let data = try? Crypto.encoder.encode(rest) { try? SecureFile.write(data, to: url) }
+        if let data = try? Crypto.encoder.encode(history) { try? SecureFile.write(data, to: historyURL) }
     }
 }
 

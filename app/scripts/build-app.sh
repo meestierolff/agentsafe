@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${VERSION:-0.3.0}"
+VERSION="${VERSION:-0.4.0}"
 BUILD="${BUILD:-$(date +%Y%m%d%H%M)}"
 if [ "${RELEASE:-}" = "1" ]; then OUT_DIR="${OUT_DIR:-release}"; else OUT_DIR="${OUT_DIR:-dist}"; fi
 APP="$OUT_DIR/AgentSafe.app"

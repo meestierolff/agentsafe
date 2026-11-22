@@ -472,6 +472,10 @@ button.wbtn:hover { filter: brightness(.95); }
 .source { padding: 28px 14px 24px; text-align: center; }
 .source-title { font-size: 14px; font-weight: bold; }
 .source-caption { margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.source-wide { grid-column: 1 / -1; display: flex; align-items: center; gap: 22px; padding: 22px 28px; text-align: left; }
+.source-wide .ico-folder { flex: none; margin: 0; }
+.source-note { margin: 10px 0 0; font-size: 13px; line-height: 1.5; color: var(--muted); max-width: 640px; }
+@media (max-width: 660px) { .source-wide { flex-direction: column; text-align: center; } }
 .ico-folder { position: relative; width: 52px; height: 42px; margin: 0 auto 16px; }
 .ico-folder .tab { position: absolute; left: 4px; top: 0; width: 20px; height: 9px; border-radius: 3px 3px 0 0; background: linear-gradient(#8fbdec, #6fa3dc); border: 1px solid #4f86c3; border-bottom: none; }
 .ico-folder .body { position: absolute; left: 0; right: 0; top: 6px; bottom: 0; border-radius: 4px; background: linear-gradient(180deg, #b9dbfb 0%, #86b9ec 50%, #6aa3e0 100%); border: 1px solid #4a82c0; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7); }

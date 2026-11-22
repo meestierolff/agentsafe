@@ -35,10 +35,21 @@ enum ScanSummary {
             store: FindingStore(url: scratch.appendingPathComponent("findings.json")),
             stateURL: scratch.appendingPathComponent("state.json"))
         let started = Date()
-        let report = coordinator.runFullScan(sources: SourceCatalog.standard(home: Paths.realHome))
+        var historyStarted: Date?
+        let report = coordinator.runFullScan(sources: SourceCatalog.standard(home: Paths.realHome), progress: { label, _ in
+            if label == "Git history", historyStarted == nil { historyStarted = Date() }
+        })
         let seconds = Date().timeIntervalSince(started)
         let findings = coordinator.store.findings
         print(String(format: "files read: %d, unreadable: %d, time: %.1fs", report.filesScanned, report.filesUnreadable, seconds))
+        let history = findings.filter { $0.kind == .gitHistory }
+        let pushed = Set(history.filter { $0.git?.pushedTo != nil }.map(\.fingerprint))
+        print(String(format: "git history: %d repositories, %d unreadable, %d partly read, %d keys (%d pushed), time %.1fs",
+                     report.repositoriesScanned + report.repositoriesSkipped, report.repositoriesUnreadable.count, report.repositoriesPartlyRead.count,
+                     Set(history.map(\.fingerprint)).count, pushed.count, historyStarted.map { Date().timeIntervalSince($0) } ?? 0))
+        let listed = ListedFindings.filter(findings, vaultFingerprints: [])
+        let entries = ChecklistEntry.entries(listed: listed.findings) { KeyCatalog.profile(ruleID: $0.ruleID, preview: $0.preview) }
+        print(LeakBreakdown.compute(entries).summary + " (\(listed.hiddenOthersKeyCount) more only in other people's commits)")
         print("distinct secrets: \(Set(findings.map(\.fingerprint)).count), places: \(findings.count)")
         for (label, group) in Dictionary(grouping: findings, by: \.sourceLabel).sorted(by: { $0.key < $1.key }) {
             print("  source \(label): \(Set(group.map(\.fingerprint)).count) secrets in \(group.count) files")
@@ -150,6 +161,13 @@ enum Snapshot {
                            path: Paths.realHome.path + path, line: line, count: count, kind: kind, sourceLabel: label,
                            firstSeen: Date(), lastSeen: Date(), status: status)
         }
+        func history(fingerprint: String, preview: String, ruleID: String, service: String, repository: String, path: String, pushedTo: String?) -> Finding {
+            let repo = Paths.realHome.path + repository
+            let place = Finding.gitPath(commonDirectory: repo + "/.git", pathInRepository: path)
+            return Finding(id: "\(fingerprint)-\(place)", ruleID: ruleID, service: service, name: nil, preview: preview, fingerprint: fingerprint,
+                           path: place, line: 2, count: 3, kind: .gitHistory, sourceLabel: "Git history", firstSeen: Date(), lastSeen: Date(),
+                           status: .open, git: GitLocation(repository: repo, pathInRepository: path, pushedTo: pushedTo, inHead: false, committedByUser: true))
+        }
         let anthropic = keys[0].1
         let resend = "re_" + noise(8, 19) + "_" + noise(24, 20)
         model.loadDemo(findings: [
@@ -167,6 +185,10 @@ enum Snapshot {
             finding(noise(40, 22), "API key", "/projects/shop/.env", 9, 1, .envFile, "Env file", name: "SESSION_SECRET"),
             finding("sk_" + "live_" + noise(30, 23), "Stripe", "/projects/old-saas/.env.production", 2, 1, .envFile, "Env file", name: "STRIPE_SECRET_KEY"),
             finding(noise(36, 24), "API key", "/projects/old-saas/.env.production", 5, 1, .envFile, "Env file", name: "SENDGRID_API_KEY"),
+            history(fingerprint: "demo-stripe-live", preview: "sk_live_…C39H", ruleID: "stripe", service: "Stripe", repository: "/projects/old-saas",
+                    path: ".env.production", pushedTo: "github.com/you/old-saas"),
+            history(fingerprint: Fingerprint.of(resend, salt: salt), preview: Redactor.preview(resend), ruleID: "resend", service: "Resend",
+                    repository: "/.dotfiles", path: ".zsh_history", pushedTo: nil),
         ], license: License(id: "demo", email: nil, iat: 0, sku: "agentsafe-mac"))
         return model
     }

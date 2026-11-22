@@ -5,7 +5,13 @@ import { AppIcon, TitleBar } from "../components/chrome";
 import { SiteMenuBar } from "../components/site-menu-bar";
 import { CopyButton } from "../copy-button";
 
-export const metadata: Metadata = { title: "Your AgentSafe licence", robots: { index: false } };
+export const metadata: Metadata = {
+  title: "Your AgentSafe licence",
+  robots: { index: false },
+  // This page's link carries the checkout session that shows the licence. Links out of
+  // it (to the download, back to the home page) send only the site's origin as referrer.
+  referrer: "origin",
+};
 // The licence depends on the link's session id, so this page is never cached.
 export const dynamic = "force-dynamic";
 

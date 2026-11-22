@@ -11,6 +11,8 @@ The source is published so you can check those claims yourself. It is source-ava
 ## What it does
 
 - **Finds leaked keys.** Scans agent transcripts (Claude Code, Codex, Cursor), agent configs, shell history and `.env` files. Each finding says what the key can do, whether it is a live or sandbox key where the format shows it, and how serious it is. Findings are stored without the key: only the first and last few characters.
+- **Checks git history.** Reads key files in git history (.env files, agent configs, chat logs, shell history and credential files in every commit) and says whether each commit was pushed, and to which remote. Pushed keys move up the rotation list. It reads `.git` directly, so it never runs `git` and never contacts the remote.
+- **Turns findings into a rotation checklist,** worst first, with what to do next for each key and a count of how many are in `.env` files, in git history and only in git history.
 - **Watches continuously.** The menu bar shield turns orange or red within seconds of a key landing in a transcript. An alert never opens the app by itself.
 - **Keeps keys in a safe.** Opening the panel or the safe window asks for Touch ID, and reading a key back asks again, every time.
 - **Tracks age and expiry,** and takes you straight to the page where each key is managed when it is time to rotate.
@@ -31,6 +33,7 @@ The source is published so you can check those claims yourself. It is source-ava
 - **`agentsafe run` gives the key to the command you start.** That command can read it. Any program running as you can ask for keys, and the command line shown in the approval prompt is whatever the requester claims. That is why each key must be switched on for this before it can be requested, and why the prompt lists every key.
 - **The Claude Code deny rules are a seatbelt.** They block its file tools and plain shell reads such as `cat`; they do not stop a script from opening the file.
 - **Detection is by pattern.** It knows key formats and `.env` variable names, not your passwords. A clean scan is good news, not proof.
+- **Git history is checked for key files, not source code.** A key typed into `config.ts` and committed is not found. "Pushed" means a remote-tracking branch has the commit, or had it before a force-push, as of your last fetch. Without network access the app cannot tell whether that repository is public.
 
 ## The command-line helper
 

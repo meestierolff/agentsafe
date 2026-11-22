@@ -81,6 +81,10 @@ final class AppModel: ObservableObject {
     @Published var licencePrompt = false
     /// A command asking for keys through `agentsafe run`. Shown as its own prompt.
     @Published private(set) var pendingRun: PendingRun?
+    /// Repositories the last full scan could not read, by folder. Keys in them may be missing.
+    @Published private(set) var unreadableRepositories: [String] = []
+    /// Repositories the last full scan could only partly read, by folder.
+    @Published private(set) var partlyReadRepositories: [String] = []
 
     let policy = RotationPolicy()
     let detector = SecretDetector()
@@ -170,7 +174,16 @@ final class AppModel: ObservableObject {
 
     // MARK: - Derived state
 
-    var openFindings: [Finding] { findings.filter { $0.status == .open } }
+    /// What is shown: history copies only someone else committed are left out.
+    var listed: ListedFindings { ListedFindings.filter(findings, vaultFingerprints: Set(items.map(\.fingerprint))) }
+
+    /// Leaked keys in the order to rotate them, open ones first.
+    var checklist: [ChecklistEntry] { ChecklistEntry.entries(listed: listed.findings) { KeyCatalog.profile(ruleID: $0.ruleID, preview: $0.preview) } }
+
+    /// Where the keys on the checklist are: in .env files, in git history, pushed.
+    var breakdown: LeakBreakdown { LeakBreakdown.compute(checklist) }
+
+    var openFindings: [Finding] { listed.findings.filter { $0.status == .open } }
 
     /// Copies that should not exist: in agent transcripts, agent configs and shell history.
     var leakFindings: [Finding] { openFindings.filter { $0.kind.isLeak } }
@@ -459,10 +472,37 @@ final class AppModel: ObservableObject {
                 self.settings.lastScan = Date()
                 self.settings.hasCompletedSetup = true
                 self.saveSettings()
+                if !report.cancelled {
+                    self.unreadableRepositories = report.repositoriesUnreadable
+                    self.partlyReadRepositories = report.repositoriesPartlyRead
+                }
                 let fresh = report.newFindings.filter { $0.status == .open && $0.kind.isLeak }
                 if !fresh.isEmpty { self.announce(fresh, live: false) }
+                self.announcePushed(report.newFindings)
             }
         }
+    }
+
+    /// Full scans stay silent, so a first scan cannot flood the user, with one exception:
+    /// keys found in pushed commits are the most serious kind, so they get one summary.
+    /// It names no repository and no key.
+    private func announcePushed(_ fresh: [Finding]) {
+        let listedIDs = Set(listed.findings.map(\.id))
+        let pushed = Set(fresh.filter { $0.kind == .gitHistory && $0.status == .open && $0.git?.pushedTo != nil && listedIDs.contains($0.id) }
+            .map(\.fingerprint))
+        guard !pushed.isEmpty else { return }
+        let body = pushed.count == 1
+            ? "1 key was found in pushed git commits. Open AgentSafe to see it and rotate."
+            : "\(pushed.count) keys were found in pushed git commits. Open AgentSafe to see them and rotate."
+        Notifier.send(title: "Keys found in pushed git commits", body: body)
+    }
+
+    /// Puts the breakdown on the clipboard as one line of counts, for a post or a reply.
+    func copyBreakdownSummary() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(breakdown.summary, forType: .string)
+        lastClipboardChange = NSPasteboard.general.changeCount
+        toast = "Summary copied."
     }
 
     func cancelScan() { scanCancelled.set(true) }
@@ -546,9 +586,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Every open leak. Used by "Remove all local copies".
+    /// Every open leak in a transcript or shell history. Used by "Remove all local copies".
+    /// Configs and git history are never rewritten, so they are not passed on at all.
     func removeAllLocalCopies() {
-        removeLocalCopies(of: leakFindings.filter { $0.localCopyRemovedAt == nil })
+        removeLocalCopies(of: leakFindings.filter { $0.kind.isRecord && $0.localCopyRemovedAt == nil })
     }
 
     /// Whether exact file locations may be shown.

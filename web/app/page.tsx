@@ -32,12 +32,14 @@ const limits: [string, string][] = [
   ["agentsafe run trusts the command you start.", "That command can read the key. Any program running as you can ask for keys, and the command line in the prompt is whatever the requester claims. That is why each key must be switched on first, and why the prompt lists every key."],
   ["Deny rules are a seatbelt.", "They block Claude Code's file tools and plain shell reads such as cat. They do not stop a script from opening the file."],
   ["Detection is by pattern.", "It knows key formats and .env variable names, not your passwords."],
+  ["Git history means key files, not code.", "It reads .env files, agent configs, chat logs and shell history in every commit, not source code. Pushed means a remote branch has the commit as of your last fetch; without network access it cannot tell whether that repository is public."],
 ];
 
 const faqs = [
   { q: "Can AgentSafe send my keys anywhere?", a: "No. The app runs in the macOS sandbox without the network client entitlement, so macOS blocks every connection it attempts. Check any build with codesign, or run the app binary with --selftest." },
   { q: "Does it keep a copy of the keys it finds?", a: "No. Findings are stored without the key: only the first and last few characters, enough for you to recognise it." },
   { q: "I found a leaked key. Is deleting the transcript enough?", a: "No. A key that reached a transcript was already sent to the model provider. Removing the local copy helps; only rotating the key fixes it. AgentSafe takes you to the page where that key is managed." },
+  { q: "Does it check git history?", a: "Yes, for key files: every past version of .env files, agent configs, chat logs, shell history and credential files, in every repository in your home folder. It says whether each commit was pushed and to which remote, and lists pushed keys higher. Keys that only other people committed, such as sample keys in projects you cloned, are counted but not listed. Rotating is the fix; rewriting history is optional clean-up, and AgentSafe never does it for you." },
   { q: "Will removing leaked copies break my apps?", a: "No. Removal only rewrites records nothing reads a key back from: agent transcripts and shell history. .env files, agent configs and credential files are left alone and listed as in use. To get a key out of a .env file, move the project onto agentsafe run, then rotate the key." },
   { q: "Can an agent open the safe?", a: "It cannot pass Touch ID, and every read asks again. It can still read anything you leave in plain files, and a command you start with agentsafe run can read the keys it is given." },
   { q: "Will an alert interrupt me?", a: "The shield in the menu bar changes colour and a notification appears. An alert never opens the app by itself." },
@@ -142,7 +144,7 @@ export default async function Home() {
             <SectionHead
               eyebrow="Where it looks"
               title="Scans the places your agents write things down"
-              sub="Transcripts from Claude Code, Codex and Cursor, plus agent configs, shell history and .env files. Detection is by pattern: it knows key formats and .env variable names."
+              sub="Transcripts from Claude Code, Codex and Cursor, plus agent configs, shell history, .env files and the key files in your git history. Detection is by pattern: it knows key formats and .env variable names."
             />
           </div>
           <div className="sources">
@@ -163,6 +165,17 @@ export default async function Home() {
             <div className="card source">
               <div className="ico-env" aria-hidden="true"><span>ENV</span></div>
               <div className="source-title">.env files</div><div className="source-caption">in your projects</div>
+            </div>
+            <div className="card source source-wide">
+              <div className="ico-folder" aria-hidden="true"><div className="tab" /><div className="body" /></div>
+              <div>
+                <div className="source-title">Git history, pushed or not</div>
+                <div className="source-caption">every past version of .env files, agent configs and shell history, in every commit</div>
+                <p className="source-note">
+                  A key deleted from a .env file is still in the commit that added it. AgentSafe reads .git directly, says
+                  whether that commit was pushed and to which remote, and puts pushed keys higher on the rotation list.
+                </p>
+              </div>
             </div>
           </div>
           <div className="marquee">

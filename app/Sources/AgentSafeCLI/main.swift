@@ -12,7 +12,7 @@ import Foundation
 // This program never prints a key and never stores one. It asks the app, the app asks
 // you (Touch ID), and the reply is decrypted in memory and handed to the command.
 
-let version = "0.3.0"
+let version = "0.4.0"
 
 enum Exit: Int32 {
     case usage = 2

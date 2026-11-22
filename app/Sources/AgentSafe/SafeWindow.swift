@@ -581,7 +581,7 @@ struct ProfileChips: View {
 
 struct LeaksView: View {
     enum Section: String, CaseIterable, Identifiable {
-        case leaked = "Leaked by agents"
+        case leaked = "To rotate"
         case exposed = "Sitting in .env files"
         var id: String { rawValue }
     }
@@ -592,19 +592,16 @@ struct LeaksView: View {
     @State private var showResolved = false
     @State private var confirmingRemoveAll = false
 
-    private func groups(for section: Section) -> [LeakGroup] {
-        let leakedPrints = Set(model.findings.filter { $0.kind.isLeak }.map(\.fingerprint))
-        let visible = model.findings.filter { finding in
-            guard showResolved || finding.status == .open else { return false }
-            // A key that leaked is shown once, under "leaked", with all its places.
-            return section == .leaked ? leakedPrints.contains(finding.fingerprint) : !leakedPrints.contains(finding.fingerprint)
-        }
+    /// Keys only in .env and credential files, grouped by key.
+    private var exposedGroups: [LeakGroup] {
+        let listed = model.listed.findings
+        let leakedPrints = Set(listed.filter { $0.kind.isLeak }.map(\.fingerprint))
+        let visible = listed.filter { (showResolved || $0.status == .open) && !leakedPrints.contains($0.fingerprint) }
         return Dictionary(grouping: visible, by: \.fingerprint)
             .map { print, findings -> LeakGroup in
-                let sorted = findings.sorted { ($0.kind.isLeak ? 0 : 1, $0.path) < ($1.kind.isLeak ? 0 : 1, $1.path) }
+                let sorted = findings.sorted { $0.path < $1.path }
                 return LeakGroup(fingerprint: print, findings: sorted, profile: model.profile(of: sorted[0]))
             }
-            // Open before resolved, then the most dangerous first, then the most widely spread.
             .sorted {
                 ($0.status == .open ? 0 : 1, -$0.profile.severity.rawValue, -$0.findings.count, $0.first.service, $0.fingerprint)
                     < ($1.status == .open ? 0 : 1, -$1.profile.severity.rawValue, -$1.findings.count, $1.first.service, $1.fingerprint)
@@ -612,12 +609,13 @@ struct LeaksView: View {
     }
 
     var body: some View {
-        let shown = groups(for: section)
+        let checklist = model.checklist
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 if case .running(let label, let files) = model.activity {
                     ProgressView().controlSize(.small)
-                    Text("Scanning \(label.lowercased()): \(files) files checked").font(Aqua.font(12)).foregroundStyle(Aqua.ink)
+                    Text(label == "Git history" ? "Reading git history: \(files) repositories checked" : "Scanning \(label.lowercased()): \(files) files checked")
+                        .font(Aqua.font(12)).foregroundStyle(Aqua.ink)
                     Button("Stop") { model.cancelScan() }.buttonStyle(.gel)
                 } else if !model.hasFolderAccess {
                     Text("AgentSafe has not been allowed to read your home folder yet.").font(Aqua.font(12)).foregroundStyle(Aqua.ink)
@@ -630,8 +628,11 @@ struct LeaksView: View {
                     }
                 }
                 Spacer()
-                Toggle("Show rotated and ignored", isOn: $showResolved).font(Aqua.font(11.5)).foregroundStyle(Aqua.ink)
+                if section == .exposed {
+                    Toggle("Show rotated and ignored", isOn: $showResolved).font(Aqua.font(11.5)).foregroundStyle(Aqua.ink)
+                }
             }
+            unreadableLine
 
             HStack(spacing: 6) {
                 Button("\(Section.leaked.rawValue) (\(model.openLeakCount))") { section = .leaked }
@@ -642,52 +643,103 @@ struct LeaksView: View {
                 if section == .leaked, model.openLeakCount > 0 { removeAllControl }
             }
 
-            if section == .leaked, model.openLeakCount > 0 { summaryLine }
             if model.licencePrompt, !model.isLicensed { LicencePrompt(model: model) }
             if let report = model.lastRemoval { RemovalSummary(report: report) { model.lastRemoval = nil } }
 
-            Text(section == .leaked
-                 ? "These are copies that should not exist. A key in an agent transcript was sent to the model provider, and anything running as you can read the file. Removing the local copy does not undo that. Rotating the key does."
-                 : "These keys are in plaintext .env files. That is normal, but any agent you open in that folder can read them. Move the ones you care about into the safe, and use Harden agents to stop Claude Code reading .env files.")
-                .font(Aqua.font(11.5)).foregroundStyle(Aqua.inkSoft).fixedSize(horizontal: false, vertical: true)
-
-            if shown.isEmpty {
-                AquaBox(title: nil) {
-                    HStack(spacing: 9) {
-                        StatusLamp(color: Aqua.ok, size: 12)
-                        Text(model.settings.lastScan == nil ? "Run a scan to see what your agents have left behind."
-                             : (section == .leaked ? "No leaked keys found." : "No keys found in .env files."))
-                            .font(Aqua.font(13, bold: true)).foregroundStyle(Aqua.ink)
-                    }
-                    if model.settings.lastScan != nil {
-                        Text("Detection is by known key formats and .env variable names. A clean result is good news, not proof.").aquaBody()
-                    }
-                }
-                Spacer()
+            if section == .leaked {
+                leakedSection(checklist)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 9) {
-                        ForEach(shown) { group in
-                            LeakCard(model: model, group: group, isLeak: section == .leaked, isExpanded: expanded.contains(group.id)) {
-                                guard model.requireLicence() else { return }
-                                if expanded.contains(group.id) { expanded.remove(group.id) } else { expanded.insert(group.id) }
-                            }
-                        }
+                exposedSection
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var unreadableLine: some View {
+        let unreadable = model.unreadableRepositories + model.partlyReadRepositories
+        if !unreadable.isEmpty {
+            Text("\(unreadable.count) \(unreadable.count == 1 ? "repository" : "repositories") could not be fully read, so keys in \(unreadable.count == 1 ? "it" : "them") may be missing.")
+                .font(Aqua.font(11.5)).foregroundStyle(Aqua.danger)
+                .help(unreadable.map(Paths.display).joined(separator: "\n"))
+        }
+    }
+
+    @ViewBuilder
+    private func leakedSection(_ checklist: [ChecklistEntry]) -> some View {
+        let open = checklist.filter(\.isOpen)
+        if !checklist.isEmpty {
+            let rotated = checklist.filter { !$0.isOpen && $0.findings.contains { $0.status == .rotated } }.count
+            HStack(spacing: 10) {
+                Text("\(rotated) of \(checklist.count) rotated").font(Aqua.font(12, bold: true)).foregroundStyle(Aqua.ink)
+                ProgressView(value: Double(rotated), total: Double(checklist.count)).frame(width: 160)
+                Spacer()
+            }
+            if checklist.contains(where: \.inHistory) {
+                Text("Pushed keys move up one level: anyone with access to that repository has them.")
+                    .font(Aqua.font(11.5)).foregroundStyle(Aqua.inkSoft)
+            }
+        }
+        let hiddenOthers = model.listed.hiddenOthersKeyCount
+        if !open.isEmpty {
+            BreakdownBox(model: model, breakdown: model.breakdown, hiddenOthers: hiddenOthers)
+        } else if hiddenOthers > 0 {
+            Text("\(hiddenOthers) \(hiddenOthers == 1 ? "key is" : "keys are") in commits by other people. Only whoever made a key can rotate it.")
+                .font(Aqua.font(11.5)).foregroundStyle(Aqua.inkSoft)
+        }
+
+        Text("These are copies that should not exist. A key in an agent transcript was sent to the model provider, and anything running as you can read the file. A key in a pushed commit can be read by anyone with access to that repository, and deleting the file in a new commit does not remove it from history. Removing a local copy does not undo that. Rotating the key does.")
+            .font(Aqua.font(11.5)).foregroundStyle(Aqua.inkSoft).fixedSize(horizontal: false, vertical: true)
+
+        if checklist.isEmpty {
+            emptyBox(found: "No leaked keys found.")
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 9) {
+                    ForEach(Array(checklist.enumerated()), id: \.element.id) { index, entry in
+                        ChecklistCard(model: model, entry: entry, number: entry.isOpen ? index + 1 : nil,
+                                      isExpanded: expanded.contains(entry.id)) { toggle(entry.id) }
                     }
                 }
             }
         }
     }
 
-    /// "12 critical, 30 high": how bad the list is before reading it.
-    private var summaryLine: some View {
-        HStack(spacing: 6) {
-            Text("\(model.openLeakCount) leaked \(model.openLeakCount == 1 ? "key" : "keys"), worst first:")
-                .font(Aqua.font(12, bold: true)).foregroundStyle(Aqua.ink)
-            ForEach(model.leakSeverityCounts, id: \.severity) { entry in
-                Chip(text: "\(entry.count) \(entry.severity.label.lowercased())", colour: entry.severity.colour)
+    @ViewBuilder
+    private var exposedSection: some View {
+        let shown = exposedGroups
+        Text("These keys are in plaintext .env files. That is normal, but any agent you open in that folder can read them. Move the ones you care about into the safe, and use Harden agents to stop Claude Code reading .env files.")
+            .font(Aqua.font(11.5)).foregroundStyle(Aqua.inkSoft).fixedSize(horizontal: false, vertical: true)
+        if shown.isEmpty {
+            emptyBox(found: "No keys found in .env files.")
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 9) {
+                    ForEach(shown) { group in
+                        LeakCard(model: model, group: group, isLeak: false, isExpanded: expanded.contains(group.id)) { toggle(group.id) }
+                    }
+                }
             }
         }
+    }
+
+    private func toggle(_ id: String) {
+        guard model.requireLicence() else { return }
+        if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+    }
+
+    @ViewBuilder
+    private func emptyBox(found: String) -> some View {
+        AquaBox(title: nil) {
+            HStack(spacing: 9) {
+                StatusLamp(color: Aqua.ok, size: 12)
+                Text(model.settings.lastScan == nil ? "Run a scan to see what your agents have left behind." : found)
+                    .font(Aqua.font(13, bold: true)).foregroundStyle(Aqua.ink)
+            }
+            if model.settings.lastScan != nil {
+                Text("Detection is by known key formats and .env variable names. A clean result is good news, not proof.").aquaBody()
+            }
+        }
+        Spacer()
     }
 
     @ViewBuilder
@@ -703,6 +755,39 @@ struct LeaksView: View {
             Button("Remove all local copies") {
                 if model.requireLicence() { confirmingRemoveAll = true }
             }.buttonStyle(.gelSmallPrimary)
+        }
+    }
+}
+
+/// "Where these 68 keys are": the counts behind the checklist, and one line to copy.
+struct BreakdownBox: View {
+    @ObservedObject var model: AppModel
+    var breakdown: LeakBreakdown
+    var hiddenOthers: Int
+
+    var body: some View {
+        AquaBox(title: nil) {
+            HStack {
+                Text(breakdown.total == 1 ? "Where this key is" : "Where these \(breakdown.total) keys are")
+                    .font(Aqua.font(12.5, bold: true)).foregroundStyle(Aqua.ink)
+                Spacer()
+                Button("Copy summary") { model.copyBreakdownSummary() }.buttonStyle(.gelSmall)
+            }
+            row(breakdown.inEnvFile, "also in a .env file today")
+            row(breakdown.inGitHistory, "in git history (\(breakdown.pushed) pushed)")
+            row(breakdown.onlyInGitHistory, "only in git history: deleted from every file, still in commits")
+            row(breakdown.onlyInRecordsAndConfigs, "only in agent transcripts, configs and shell history")
+            if hiddenOthers > 0 {
+                Text("\(hiddenOthers) more \(hiddenOthers == 1 ? "key is" : "keys are") in commits by other people. Only whoever made a key can rotate it.")
+                    .font(Aqua.font(11)).foregroundStyle(Aqua.inkSoft).padding(.top, 2)
+            }
+        }
+    }
+
+    private func row(_ count: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(count)").font(Aqua.mono(12)).foregroundStyle(Aqua.ink).frame(width: 34, alignment: .trailing)
+            Text("\(count == 1 ? "is" : "are") \(text)").font(Aqua.font(11.5)).foregroundStyle(Aqua.ink)
         }
     }
 }
@@ -802,31 +887,7 @@ struct LeakCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            if isExpanded, model.isLicensed {
-                VStack(spacing: 0) {
-                    ForEach(Array(group.findings.enumerated()), id: \.element.id) { index, place in
-                        HStack(spacing: 8) {
-                            Text(place.sourceLabel).font(Aqua.font(11, bold: true)).foregroundStyle(Aqua.ink).frame(width: 170, alignment: .leading)
-                            Text("\(Paths.display(place.path)):\(place.line)").font(Aqua.mono(10.5)).foregroundStyle(Aqua.inkSoft)
-                                .lineLimit(1).truncationMode(.middle).help(place.path)
-                            Spacer()
-                            if place.count > 1 { Text("×\(place.count)").font(Aqua.mono(10.5)).foregroundStyle(Aqua.inkSoft) }
-                            if place.localCopyRemovedAt != nil {
-                                Text("Copy removed").font(Aqua.font(10.5, bold: true)).foregroundStyle(Aqua.ok)
-                            } else if !place.kind.isRecord {
-                                Text("In use here: move it to the safe").font(Aqua.font(10.5)).foregroundStyle(Aqua.inkSoft)
-                            } else if place.canScrub {
-                                Button("Remove local copy") { model.removeLocalCopies(of: [place]) }.buttonStyle(.gelSmall).disabled(model.isRemoving)
-                            } else {
-                                Text("Database: rotate only").font(Aqua.font(10.5)).foregroundStyle(Aqua.inkSoft)
-                            }
-                        }
-                        .padding(.horizontal, 8).padding(.vertical, 5)
-                        .background(index.isMultiple(of: 2) ? Color.white : Aqua.rowTint)
-                    }
-                }
-                .overlay(Rectangle().strokeBorder(Color.black.opacity(0.25), lineWidth: 1))
-            }
+            if isExpanded, model.isLicensed { PlacesList(model: model, findings: group.findings) }
         }
     }
 
@@ -837,6 +898,201 @@ struct LeakCard: View {
         if stored != nil { text += " This is a key in your safe." }
         if group.status == .open, group.allCopiesRemoved { text += " The local copies are removed. It still needs rotating." }
         return text
+    }
+}
+
+/// One key on the rotation checklist: what it is, and what to do, in order.
+struct ChecklistCard: View {
+    @ObservedObject var model: AppModel
+    var entry: ChecklistEntry
+    /// Position on the list for open keys; `nil` once done.
+    var number: Int?
+    var isExpanded: Bool
+    var toggle: () -> Void
+    @State private var showingHistoryHelp = false
+
+    static let historyGuide = URL(string: "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository")!
+
+    var body: some View {
+        let finding = entry.findings[0]
+        let stored = model.storedItem(for: finding)
+        let profile = model.profile(of: finding)
+        let removable = entry.findings.filter { $0.kind.isRecord && $0.canScrub && $0.localCopyRemovedAt == nil }
+        AquaBox(title: nil) {
+            HStack(alignment: .top, spacing: 10) {
+                Group {
+                    if let number { Text("\(number)").font(Aqua.font(13, bold: true)).foregroundStyle(Aqua.ink) }
+                    else { Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Aqua.ok) }
+                }
+                .frame(width: 20, alignment: .trailing).padding(.top, 1)
+                StatusLamp(color: entry.isOpen ? entry.severity.colour : Aqua.ok, size: 12).padding(.top, 3)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(stored?.name ?? finding.name ?? "\(finding.service) key").font(Aqua.font(13.5, bold: true)).foregroundStyle(Aqua.ink)
+                        Text(finding.preview).font(Aqua.mono(11.5)).foregroundStyle(Aqua.inkSoft)
+                        ProfileChips(profile: KeyProfile(summary: profile.summary, environment: profile.environment, severity: entry.severity))
+                        if entry.inHistory { Chip(text: "Git history", colour: Aqua.inkSoft) }
+                        if entry.pushed { Chip(text: "Pushed", colour: Aqua.danger) }
+                        if !entry.isOpen {
+                            Chip(text: entry.findings.contains { $0.status == .rotated } ? "Rotated" : "Ignored", colour: Aqua.ok)
+                        }
+                    }
+                    Text(profile.summary).font(Aqua.font(11.5)).foregroundStyle(Aqua.ink).fixedSize(horizontal: false, vertical: true)
+                    Text(placesLine(stored: stored)).font(Aqua.font(11.5)).foregroundStyle(Aqua.inkSoft).fixedSize(horizontal: false, vertical: true)
+
+                    if entry.isOpen {
+                        steps(finding: finding, stored: stored)
+                        HStack(spacing: 6) {
+                            if !removable.isEmpty {
+                                Button(removable.count == 1 ? "Remove local copy" : "Remove \(removable.count) local copies") {
+                                    model.removeLocalCopies(of: removable)
+                                }.buttonStyle(.gelSmall).disabled(model.isRemoving)
+                            }
+                            Button("Ignore") { model.setStatus(.ignored, for: finding) }.buttonStyle(.gelSmall)
+                            Button(isExpanded ? "Hide places" : "Show places") { toggle() }.buttonStyle(.gelSmall)
+                        }
+                        .padding(.top, 2)
+                    } else {
+                        HStack(spacing: 6) {
+                            Button("Reopen") { model.setStatus(.open, for: finding) }.buttonStyle(.gelSmall)
+                            Button(isExpanded ? "Hide places" : "Show places") { toggle() }.buttonStyle(.gelSmall)
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            if isExpanded, model.isLicensed { PlacesList(model: model, findings: entry.findings) }
+        }
+    }
+
+    @ViewBuilder
+    private func steps(finding: Finding, stored: VaultItem?) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                stepText("1. Rotate it at \(finding.service).")
+                if let url = model.rotationURL(for: finding) {
+                    Button("Open \(finding.service)") { NSWorkspace.shared.open(url) }.buttonStyle(.gelSmallPrimary)
+                }
+                Button("I rotated it") { model.setStatus(.rotated, for: finding) }.buttonStyle(.gelSmall)
+            }
+            stepText("2. " + whereUsed(stored: stored))
+            if entry.inHistory {
+                if entry.stillCommitted {
+                    stepText("3. It is still committed. Stop tracking the file and add it to .gitignore, then rotate.")
+                } else {
+                    HStack(spacing: 6) {
+                        stepText("3. Optional: remove it from git history. Rotating already makes it useless.")
+                        Button(showingHistoryHelp ? "Hide" : "How") { showingHistoryHelp.toggle() }.buttonStyle(.gelSmall)
+                    }
+                    if showingHistoryHelp {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Rewriting history needs a force-push and breaks other people's clones.")
+                            Text("The exact command for each repository is under Show places.")
+                        }
+                        .font(Aqua.font(11)).foregroundStyle(Aqua.inkSoft).padding(.leading, 14)
+                        Button("GitHub's guide to removing sensitive data") { NSWorkspace.shared.open(Self.historyGuide) }
+                            .buttonStyle(.gelSmall).padding(.leading, 14)
+                    }
+                }
+            }
+        }
+        .padding(.top, 3)
+    }
+
+    private func stepText(_ text: String) -> some View {
+        Text(text).font(Aqua.font(11.5)).foregroundStyle(Aqua.ink).fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Step 2, from what AgentSafe knows about where this key is used.
+    private func whereUsed(stored: VaultItem?) -> String {
+        var places: [String] = []
+        if stored != nil { places.append("the safe") }
+        let env = entry.envFileCopies, configs = entry.configCopies
+        if env > 0 { places.append("\(env) .env \(env == 1 ? "file" : "files")") }
+        if configs > 0 { places.append("\(configs) agent \(configs == 1 ? "config" : "configs")") }
+        guard !places.isEmpty else { return "Put the new key wherever this one was used." }
+        let list = places.count == 1 ? places[0] : places.dropLast().joined(separator: ", ") + " and " + places.last!
+        return "Put the new key where it is used: \(list)."
+    }
+
+    private func placesLine(stored: VaultItem?) -> String {
+        let count = entry.findings.count
+        let kinds = Set(entry.findings.map(\.sourceLabel)).sorted().joined(separator: ", ")
+        var text = "Found in \(count) \(count == 1 ? "place" : "places"): \(kinds)."
+        if stored != nil { text += " This is a key in your safe." }
+        return text
+    }
+}
+
+/// Every place one key was found, with what can be done there. Licensed.
+struct PlacesList: View {
+    @ObservedObject var model: AppModel
+    var findings: [Finding]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(findings.enumerated()), id: \.element.id) { index, place in
+                Group {
+                    if let git = place.git { historyRow(place, git) } else { fileRow(place) }
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(index.isMultiple(of: 2) ? Color.white : Aqua.rowTint)
+            }
+        }
+        .overlay(Rectangle().strokeBorder(Color.black.opacity(0.25), lineWidth: 1))
+    }
+
+    private func fileRow(_ place: Finding) -> some View {
+        HStack(spacing: 8) {
+            Text(place.sourceLabel).font(Aqua.font(11, bold: true)).foregroundStyle(Aqua.ink).frame(width: 170, alignment: .leading)
+            Text("\(Paths.display(place.path)):\(place.line)").font(Aqua.mono(10.5)).foregroundStyle(Aqua.inkSoft)
+                .lineLimit(1).truncationMode(.middle).help(place.path)
+            Spacer()
+            if place.count > 1 { Text("×\(place.count)").font(Aqua.mono(10.5)).foregroundStyle(Aqua.inkSoft) }
+            if place.localCopyRemovedAt != nil {
+                Text("Copy removed").font(Aqua.font(10.5, bold: true)).foregroundStyle(Aqua.ok)
+            } else if !place.kind.isRecord {
+                Text("In use here: move it to the safe").font(Aqua.font(10.5)).foregroundStyle(Aqua.inkSoft)
+            } else if place.canScrub {
+                Button("Remove local copy") { model.removeLocalCopies(of: [place]) }.buttonStyle(.gelSmall).disabled(model.isRemoving)
+            } else {
+                Text("Database: rotate only").font(Aqua.font(10.5)).foregroundStyle(Aqua.inkSoft)
+            }
+        }
+    }
+
+    private func historyRow(_ place: Finding, _ git: GitLocation) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(place.sourceLabel).font(Aqua.font(11, bold: true)).foregroundStyle(Aqua.ink).frame(width: 170, alignment: .leading)
+                Text("\(Paths.display(git.repository)) · \(git.pathInRepository)").font(Aqua.mono(10.5)).foregroundStyle(Aqua.inkSoft)
+                    .lineLimit(1).truncationMode(.middle).help(git.repository + "/" + git.pathInRepository)
+                Spacer()
+                if place.count > 1 { Text("\(place.count) versions").font(Aqua.mono(10.5)).foregroundStyle(Aqua.inkSoft) }
+            }
+            HStack(spacing: 8) {
+                Spacer().frame(width: 170)
+                Text(git.pushedTo.map { "Pushed to \($0)" } ?? "Local commits only")
+                    .font(Aqua.font(10.5, bold: git.pushedTo != nil)).foregroundStyle(git.pushedTo != nil ? Aqua.danger : Aqua.inkSoft)
+                Text("In git history: rotate it").font(Aqua.font(10.5)).foregroundStyle(Aqua.inkSoft)
+                Spacer()
+                Button("Copy command") { copy(Self.command(for: git)) }.buttonStyle(.gelSmall)
+            }
+        }
+    }
+
+    /// Stop tracking a file that is still committed; otherwise remove it from all history.
+    static func command(for git: GitLocation) -> String {
+        let path = git.pathInRepository
+        let quoted = path.allSatisfy { $0.isLetter || $0.isNumber || "._-/".contains($0) } ? path : "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return git.inHead ? "git rm --cached \(quoted)" : "git filter-repo --sensitive-data-removal --invert-paths --path \(quoted)"
+    }
+
+    private func copy(_ command: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
+        model.toast = "Command copied. Run it in that repository."
     }
 }
 

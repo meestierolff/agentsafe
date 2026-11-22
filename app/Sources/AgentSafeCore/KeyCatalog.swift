@@ -35,6 +35,10 @@ public struct KeyProfile: Equatable, Sendable {
     public let summary: String
     public let environment: KeyEnvironment
     public let severity: KeySeverity
+
+    public init(summary: String, environment: KeyEnvironment, severity: KeySeverity) {
+        self.summary = summary; self.environment = environment; self.severity = severity
+    }
 }
 
 public enum KeyCatalog {
